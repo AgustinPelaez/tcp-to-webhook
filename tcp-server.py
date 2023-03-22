@@ -27,6 +27,7 @@ def handle_client(client_socket, addr, webhook_url, escape_char):
             if char == escape_char:
                 # Send the accumulated data to the webhook
                 try:
+                    data_buffer = data_buffer.rstrip("\n") # strip out newline character at the beginning
                     response = requests.post(webhook_url, json={"data": data_buffer})
                     status_code = response.status_code
 
