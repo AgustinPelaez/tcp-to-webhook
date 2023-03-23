@@ -9,7 +9,7 @@ packages:
 write_files:
   - content: |
       [Unit]
-      Description=TCP Server that sends data to a webhook
+      Description=TCP Server Service
       After=network.target
 
       [Service]
@@ -17,8 +17,13 @@ write_files:
       User=root
       WorkingDirectory=/root
       ExecStart=/usr/bin/python3 /root/tcp_server.py --webhook-url <WEBHOOK_URL> --port <PORT> --escape-char <ESCAPE_CHAR>
+      StandardOutput=syslog
+      StandardError=syslog
+      SyslogIdentifier=tcp_server
+      StandardOutput=file:/var/log/tcp_server.log
       Restart=always
       RestartSec=5
+      StartLimitInterval=0
 
       [Install]
       WantedBy=multi-user.target
