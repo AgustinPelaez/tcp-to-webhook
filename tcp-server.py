@@ -54,6 +54,10 @@ def main():
     args = parse_arguments()
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    
+    # This line allows the address to be reused, in case the service crashes and restarts automatically:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
     server.bind(("0.0.0.0", args.port))
     server.listen(5)
     print(f"[*] Listening on 0.0.0.0:{args.port}")
