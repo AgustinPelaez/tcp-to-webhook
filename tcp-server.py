@@ -7,10 +7,11 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="TCP server that sends data to a webhook")
     parser.add_argument("--webhook-url", type=str, required=True, help="Webhook URL to send data")
     parser.add_argument("--port", type=int, default=5555, help="Port to listen on (default: 5555)")
-    parser.add_argument("--escape-char", type=str, default="#", help="Escape character (default: '#')")
+    parser.add_argument("--escape-char", type=str, default="\n", help="Escape character (default: newline)")
+    parser.add_argument("--ack-string", type=str, default="ok", help="Acknowledgement string to return on successful processing (default: 'ok')")
     return parser.parse_args()
 
-def handle_client(client_socket, addr, webhook_url, escape_char):
+def handle_client(client_socket, addr, webhook_url, escape_char, ack_string):
     print(f"[+] Connection from {addr}")
 
     data_buffer = ""
@@ -32,7 +33,7 @@ def handle_client(client_socket, addr, webhook_url, escape_char):
                     status_code = response.status_code
 
                     if 200 <= status_code < 300:
-                        client_socket.sendall(b"ok")
+                        client_socket.sendall(ack_string.encode())
                         print(f"[+] Data sent to webhook: {data_buffer}")
                     elif 400 <= status_code < 500:
                         client_socket.sendall(b"error")
@@ -59,7 +60,7 @@ def main():
 
     while True:
         client, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(client, addr, args.webhook_url, args.escape_char))
+        thread = threading.Thread(target=handle_client, args=(client, addr, args.webhook_url, args.escape_char, args.ack_string))
         thread.start()
 
 if __name__ == "__main__":
