@@ -9,7 +9,15 @@ def parse_arguments():
     parser.add_argument("--port", type=int, default=5555, help="Port to listen on (default: 5555)")
     parser.add_argument("--escape-char", type=str, default="\n", help="Escape character (default: newline)")
     parser.add_argument("--ack-string", type=str, default="ok", help="Acknowledgement string to return on successful processing (default: 'ok')")
-    return parser.parse_args()
+
+    args = parser.parse_args()
+
+    # Check if the escape character is the string "\n", if so replace it with the actual newline character
+    if args.escape_char == "\\n":
+        args.escape_char = "\n"
+
+    return args
+    
 
 def handle_client(client_socket, addr, webhook_url, escape_char, ack_string):
     print(f"[+] Connection from {addr}")
@@ -28,12 +36,13 @@ def handle_client(client_socket, addr, webhook_url, escape_char, ack_string):
             if char == escape_char:
                 # Send the accumulated data to the webhook
                 try:
+                    client_socket.sendall(ack_string.encode()) # Send ack without the need to wait for webhook response
                     data_buffer = data_buffer.rstrip("\n") # strip out newline character at the beginning
                     response = requests.post(webhook_url, json={"data": data_buffer})
                     status_code = response.status_code
 
                     if 200 <= status_code < 300:
-                        client_socket.sendall(ack_string.encode())
+                        #client_socket.sendall(ack_string.encode())
                         print(f"[+] Data sent to webhook: {data_buffer}")
                     elif 400 <= status_code < 500:
                         client_socket.sendall(b"error")
