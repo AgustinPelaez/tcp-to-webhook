@@ -1,80 +1,99 @@
-import socket
-import threading
-import requests
+import asyncio
+import aiohttp
+import hashlib
+import collections
+import time
+import datetime
+import base64
+from textwrap import wrap
 import argparse
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="TCP server that sends data to a webhook")
-    parser.add_argument("--webhook-url", type=str, required=True, help="Webhook URL to send data")
-    parser.add_argument("--port", type=int, default=5555, help="Port to listen on (default: 5555)")
-    parser.add_argument("--escape-char", type=str, default="\n", help="Escape character (default: newline)")
-    parser.add_argument("--ack-string", type=str, default="ok", help="Acknowledgement string to return on successful processing (default: 'ok')")
+# Create the parser
+parser = argparse.ArgumentParser(description="TCP Server")
 
-    args = parser.parse_args()
+# Add the arguments
+parser.add_argument('--escape-char', type=str, help='Escape character', required=True)
+parser.add_argument('--webhook-url', type=str, help='Webhook URL', required=True)
+parser.add_argument('--port', type=int, help='Port to listen on', required=True)
+parser.add_argument('--ack-string', type=str, help='Acknowledgement string or "from_webhook"', required=True)
 
-    # Check if the escape character is the string "\n", if so replace it with the actual newline character
-    if args.escape_char == "\\n":
-        args.escape_char = "\n"
+# Parse the arguments
+args = parser.parse_args()
 
-    return args
-    
+# Check if the escape character is the string "\n", if so replace it with the actual newline character
+if args.escape_char == "\\n":
+    args.escape_char = "\n"
 
-def handle_client(client_socket, addr, webhook_url, escape_char, ack_string):
-    print(f"[+] Connection from {addr}")
+ESCAPE_CHAR = args.escape_char.encode()  # make it bytes since we're checking against bytes
+URL = args.webhook_url
+PORT = args.port
+ACK = args.ack_string
 
-    data_buffer = ""
+clients = collections.defaultdict(lambda :{"message": b"", "timestamp": time.time()})
 
-    while True:
-        # Receive data from the client
-        data = client_socket.recv(1024).decode("utf-8")
+now = lambda :datetime.datetime.now().isoformat()
 
-        if not data:
-            break
+def generate_hash_client(addr):
+    return hashlib.sha1('{}-{}'.format(*addr).encode()).hexdigest()
 
-        # Check for the escape character in the received data
-        for char in data:
-            if char == escape_char:
-                # Send the accumulated data to the webhook
-                try:
-                    client_socket.sendall(ack_string.encode()) # Send ack without the need to wait for webhook response
-                    data_buffer = data_buffer.rstrip("\n") # strip out newline character at the beginning
-                    response = requests.post(webhook_url, json={"data": data_buffer})
-                    status_code = response.status_code
+async def send_to_ubifunction(payload, hash_client):
+    payload.update({'hash': hash_client})
+    print("[{}] SENDING DATA: {}".format(now(), len(payload)))
 
-                    if 200 <= status_code < 300:
-                        #client_socket.sendall(ack_string.encode())
-                        print(f"[+] Data sent to webhook: {data_buffer}")
-                    elif 400 <= status_code < 500:
-                        client_socket.sendall(b"error")
-                        print(f"[-] Error: webhook returned status code {status_code}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(URL, json=payload) as resp:
+            data = await resp.json()
+            print("Response: {} status:{}".format(data, resp.status))
+            if ACK == "from_webhook":
+                return data
+            return ACK
 
-                except Exception as e:
-                    print(f"[-] Error sending data to webhook: {e}")
-                finally:
-                    # Reset the buffer after sending the data
-                    data_buffer = ""
+class EchoServerProtocol(asyncio.Protocol):
+    def connection_made(self, transport):
+        self.peername = transport.get_extra_info('peername')
+        print('Connection from {}'.format(self.peername))
+        self.transport = transport
+
+    def data_received(self, data):
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.handle_income_packet(data))
+
+    async def handle_income_packet(self, data):
+        hash_client = generate_hash_client(self.peername)
+        try:
+            message = data.decode('utf-8')  # Try to decode the data as text
+            is_text = True
+        except UnicodeDecodeError:  # If this fails, it's probably bytes
+            message = " ".join(wrap(data.hex(), 2))  # We'll keep your hex representation here
+            is_text = False
+
+        print('[{}] Received {} from {}'.format(now(), message, self.peername))
+        print('[{}] Data received: {!r}'.format(now(), message))
+        if ESCAPE_CHAR in data:
+            if is_text:
+                message = message.rstrip("\n") # strip out newline character
+                payload = {'data': message, 'event': 'data'}
             else:
-                data_buffer += char
+                payload = {'data': base64.b64encode(data).decode(), 'event': 'data'}
 
-    print(f"[-] Connection closed: {addr}")
-    client_socket.close()
+        payload = await send_to_ubifunction(payload, hash_client)
+        self.transport.write(ACK if isinstance(ACK, bytes) else ACK.encode())
 
-def main():
-    args = parse_arguments()
 
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
-    # This line allows the address to be reused, in case the service crashes and restarts automatically:
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
-    server.bind(("0.0.0.0", args.port))
-    server.listen(5)
-    print(f"[*] Listening on 0.0.0.0:{args.port}")
+loop = asyncio.get_event_loop()
 
-    while True:
-        client, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(client, addr, args.webhook_url, args.escape_char, args.ack_string))
-        thread.start()
+tcp_server = loop.create_server(EchoServerProtocol, '0.0.0.0', PORT)
+server = loop.run_until_complete(tcp_server)
 
-if __name__ == "__main__":
-    main()
+print('Serving on TCP')
+
+
+try:
+    loop.run_forever()
+except KeyboardInterrupt:
+    pass
+
+# Close the server
+server.close()
+loop.run_until_complete(server.wait_closed())
+loop.close()
