@@ -45,7 +45,7 @@ async def send_to_ubifunction(payload, hash_client):
             data = await resp.json()
             print("Response: {} status:{}".format(data, resp.status))
             if ACK == "from_webhook":
-                return data
+                return data.get('response', data.get('error','data received'))
             return ACK
 
 class EchoServerProtocol(asyncio.Protocol):
@@ -75,9 +75,8 @@ class EchoServerProtocol(asyncio.Protocol):
                 payload = {'data': message, 'event': 'data'}
             else:
                 payload = {'data': base64.b64encode(data).decode(), 'event': 'data'}
-
-        payload = await send_to_ubifunction(payload, hash_client)
-        self.transport.write(ACK if isinstance(ACK, bytes) else ACK.encode())
+            ACK = await send_to_ubifunction(payload, hash_client)
+            self.transport.write(ACK if isinstance(ACK, bytes) else ACK.encode())
 
 
 loop = asyncio.get_event_loop()
